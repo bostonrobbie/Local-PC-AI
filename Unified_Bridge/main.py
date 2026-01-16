@@ -1,0 +1,205 @@
+import sys
+import os
+import json
+import time
+import logging
+import logging
+import socket
+from colorama import init, Fore, Style
+from src.manager import ProcessManager
+
+init() # Colorama
+
+# --- SINGLETON LOCK ---
+# Check if another instance is already running
+lock_socket = None
+def acquire_lock():
+    global lock_socket
+    lock_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Bind to a high port that is unlikely to be used
+        lock_socket.bind(('127.0.0.1', 64000))
+    except socket.error:
+        print(f"{Fore.RED}ERROR: Another instance of Unified Bridge is already running.{Style.RESET_ALL}")
+        print(f"{Fore.RED}Please close the other window before starting a new one.{Style.RESET_ALL}")
+        sys.exit(1)
+
+# Ensure logs dir exists
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+# Setup Logging
+logging.basicConfig(
+    filename='logs/supervisor.log', 
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
+
+def load_config():
+    with open('config.json', 'r') as f:
+        return json.load(f)
+
+def main():
+    acquire_lock()
+    print(f"{Fore.CYAN}=========================================={Style.RESET_ALL}")
+    print(f"{Fore.CYAN}       UNIFIED BRIDGE SUPERVISOR 🚀       {Style.RESET_ALL}")
+    print(f"{Fore.CYAN}=========================================={Style.RESET_ALL}")
+
+    try:
+        config = load_config()
+    except Exception as e:
+        print(f"{Fore.RED}Failed to load config.json: {e}{Style.RESET_ALL}")
+        return
+
+    mgr = ProcessManager(config)
+
+    # --- 1. CLEANUP OLD MESS (ROBUST PORT KILL) ---
+    print("🧹 Cleaning up old processes...")
+    
+    # 1.1 Truncate Logs
+    for log_file in ['logs/ibkr.log', 'logs/mt5.log', 'logs/dashboard.log', 'logs/supervisor.log']:
+        with open(log_file, 'w') as f: f.write(f"--- Log Reset {time.ctime()} ---\n")
+
+    # 1.2 Kill by Port
+    mgr.kill_port(config['server']['ibkr_port'])
+    mgr.kill_port(config['server']['mt5_port'])
+    mgr.kill_port(8502) # Dashboard
+            
+    # Give OS a moment to release ports
+    time.sleep(1)
+
+
+    # --- 2. START COMPONENTS ---
+
+    # 2.0 Auto-Launch External Apps
+    print("🚀 Checking External Applications...")
+    
+    # Check TWS
+    if not mgr.check_tws_process():
+        print(f"{Fore.YELLOW}TWS not found. Launching...{Style.RESET_ALL}")
+        tws_path = config['ibkr'].get('tws_path')
+        if tws_path:
+            mgr.launch_external_app("TWS", tws_path)
+            time.sleep(15) # Wait for TWS to start
+        else:
+            print(f"{Fore.RED}TWS Path not configured in config.json!{Style.RESET_ALL}")
+    
+    # Check MT5
+    if not mgr.check_mt5_process():
+        print(f"{Fore.YELLOW}MT5 not found. Launching...{Style.RESET_ALL}")
+        mt5_path = config['mt5'].get('path')
+        if mt5_path:
+            mgr.launch_external_app("MT5", mt5_path)
+            time.sleep(10) # Wait for MT5
+        else:
+             print(f"{Fore.RED}MT5 Path not configured!{Style.RESET_ALL}")
+    
+    # IBKR Bridge
+    ib_log = open('logs/ibkr.log', 'a')
+    ibkr_cmd = f'"{sys.executable}" -u src/ibkr/bridge.py'
+    mgr.start_process("IBKR_Bridge", ibkr_cmd, stdout=ib_log, stderr=ib_log)
+
+    # MT5 Bridge
+    mt5_log = open('logs/mt5.log', 'a')
+    mt5_cmd = f'"{sys.executable}" -u src/mt5/bridge.py'
+    mgr.start_process("MT5_Bridge", mt5_cmd, stdout=mt5_log, stderr=mt5_log)
+
+    # Tunnels
+    ibkr_sub = config['tunnels']['ibkr_subdomain']
+    ibkr_port = config['server']['ibkr_port']
+    mgr.start_process("IBKR_Tunnel", f"lt --port {ibkr_port} --subdomain {ibkr_sub}")
+
+    mt5_sub = config['tunnels']['mt5_subdomain']
+    mt5_port = config['server']['mt5_port']
+    mgr.start_process("MT5_Tunnel", f"lt --port {mt5_port} --subdomain {mt5_sub}")
+
+    # Dashboard
+    dash_log = open('logs/dashboard.log', 'a')
+    # CHANGED: Port 8502 to avoid conflicts
+    dash_cmd = f'"{sys.executable}" -u -m streamlit run dashboard/app.py --server.port 8502 --server.headless true'
+    mgr.start_process("Dashboard", dash_cmd, stdout=dash_log, stderr=dash_log)
+    
+    print("\n✅ System Started. Press Ctrl+C to Stop.\n")
+
+    # --- 3. MAIN LOOP ---
+    last_app_check = time.time()
+    
+    try:
+        while True:
+            mgr.monitor()
+            
+            # --- Auto-Restart with Backoff ---
+            required = ["IBKR_Bridge", "MT5_Bridge", "IBKR_Tunnel", "MT5_Tunnel", "Dashboard"]
+            for name in required:
+                if name not in mgr.processes:
+                    if mgr.should_restart(name):
+                        mgr.register_restart(name)
+                        print(f"{Fore.YELLOW}Auto-Restarting {name}...{Style.RESET_ALL}")
+                        
+                        # Re-trigger start
+                        if "IBKR_Bridge" in name: mgr.start_process(name, ibkr_cmd, stdout=ib_log, stderr=ib_log)
+                        elif "MT5_Bridge" in name: mgr.start_process(name, mt5_cmd, stdout=mt5_log, stderr=mt5_log)
+                        elif "IBKR_Tunnel" in name: mgr.start_process(name, f"lt --port {ibkr_port} --subdomain {ibkr_sub}")
+                        elif "MT5_Tunnel" in name: mgr.start_process(name, f"lt --port {mt5_port} --subdomain {mt5_sub}")
+                        elif "Dashboard" in name: 
+                            mgr.kill_port(8502) # Ensure port is free
+                            mgr.start_process(name, dash_cmd, stdout=dash_log, stderr=dash_log)
+
+            # --- Internal Health Checks (Localhost) & Status Monitor ---
+            # Track previous states to print changes
+            if 'connection_states' not in locals():
+                connection_states = {"IBKR": False, "MT5": False}
+
+            # IBKR Check
+            ib_data = mgr.check_health("IBKR_Bridge", f"http://localhost:{config['server']['ibkr_port']}")
+            if ib_data:
+                is_connected = (ib_data.get("status") == "connected")
+                if is_connected and not connection_states["IBKR"]:
+                    print(f"{Fore.GREEN}✅ IBKR/TWS CONNECTED! Ready for trades.{Style.RESET_ALL}")
+                    connection_states["IBKR"] = True
+                elif not is_connected and connection_states["IBKR"]:
+                    print(f"{Fore.RED}⚠️ IBKR/TWS DISCONNECTED{Style.RESET_ALL}")
+                    connection_states["IBKR"] = False
+            
+            # MT5 Check
+            mt5_data = mgr.check_health("MT5_Bridge", f"http://localhost:{config['server']['mt5_port']}")
+            if mt5_data:
+                is_connected = (mt5_data.get("status") == "connected")
+                if is_connected and not connection_states["MT5"]:
+                    print(f"{Fore.GREEN}✅ MT5 CONNECTED! Ready for trades.{Style.RESET_ALL}")
+                    connection_states["MT5"] = True
+                elif not is_connected and connection_states["MT5"]:
+                    print(f"{Fore.RED}⚠️ MT5 DISCONNECTED{Style.RESET_ALL}")
+                    connection_states["MT5"] = False
+            
+            # --- External Tunnel Verification (Public Internet) ---
+            ibkr_public = f"https://{ibkr_sub}.loca.lt"
+            mt5_public = f"https://{mt5_sub}.loca.lt"
+            mgr.check_public_health("IBKR_Tunnel", ibkr_public)
+            mgr.check_public_health("MT5_Tunnel", mt5_public)
+            
+            # --- External App Keep-Alive (Check every 60s) ---
+            if time.time() - last_app_check > 60:
+                # Check TWS
+                if not mgr.check_tws_process():
+                    print(f"{Fore.RED}ALERT: TWS not running! Attempting re-launch...{Style.RESET_ALL}")
+                    tws_path = config['ibkr'].get('tws_path')
+                    if tws_path: mgr.launch_external_app("TWS", tws_path)
+                
+                # Check MT5
+                if not mgr.check_mt5_process():
+                    print(f"{Fore.RED}ALERT: MT5 not running! Attempting re-launch...{Style.RESET_ALL}")
+                    mt5_path = config['mt5'].get('path')
+                    if mt5_path: mgr.launch_external_app("MT5", mt5_path)
+                    
+                last_app_check = time.time()
+            
+            time.sleep(2)
+            
+    except KeyboardInterrupt:
+        print("\n🛑 Stopping System...")
+        mgr.cleanup()
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,55 @@
+--- Log Reset Fri Jan 16 15:49:31 2026 ---
+2026-01-16 15:49:48,391 [IBKR] Starting AsyncIO Event Loop...
+2026-01-16 15:49:48,392 [IBKR] IBKR Client Initialized.
+2026-01-16 15:49:48,392 [IBKR] Initiating Background Connection...
+2026-01-16 15:49:48,392 [IBKR] Connecting to IBKR 127.0.0.1:7497 (ID: 2834)...
+2026-01-16 15:49:48,392 [IBKR] Connecting to 127.0.0.1:7497 with clientId 2834...
+2026-01-16 15:49:48,391 [IBKR] Starting IBKR Bridge on 5001
+ * Serving Flask app 'bridge'
+ * Debug mode: off
+2026-01-16 15:49:48,405 [IBKR] [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://192.168.0.21:5001
+2026-01-16 15:49:48,405 [IBKR] [33mPress CTRL+C to quit[0m
+2026-01-16 15:49:50,426 [IBKR] Disconnecting
+2026-01-16 15:49:50,426 [IBKR] API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+2026-01-16 15:49:50,426 [IBKR] Make sure API port on TWS/IBG is open
+2026-01-16 15:49:50,426 [IBKR] Connection Failed: [WinError 1225] The remote computer refused the network connection
+2026-01-16 15:50:20,870 [IBKR] Health Check: Attempting TWS Connection (Async)...
+2026-01-16 15:50:20,870 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:20] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:50:20,870 [IBKR] Connecting to IBKR 127.0.0.1:7497 (ID: 6054)...
+2026-01-16 15:50:20,871 [IBKR] Connecting to 127.0.0.1:7497 with clientId 6054...
+2026-01-16 15:50:20,871 [IBKR] Connected
+2026-01-16 15:50:20,900 [IBKR] Logged on to server version 178
+2026-01-16 15:50:20,907 [IBKR] API connection ready
+2026-01-16 15:50:20,911 [IBKR] Warning 2104, reqId -1: Market data farm connection is OK:usfarm.nj
+2026-01-16 15:50:20,911 [IBKR] Warning 2104, reqId -1: Market data farm connection is OK:usopt.nj
+2026-01-16 15:50:20,911 [IBKR] Warning 2104, reqId -1: Market data farm connection is OK:cashfarm
+2026-01-16 15:50:20,911 [IBKR] Warning 2104, reqId -1: Market data farm connection is OK:usfarm
+2026-01-16 15:50:20,911 [IBKR] Warning 2106, reqId -1: HMDS data farm connection is OK:ushmds
+2026-01-16 15:50:20,911 [IBKR] Warning 2158, reqId -1: Sec-def data farm connection is OK:secdefnj
+2026-01-16 15:50:21,216 [IBKR] Synchronization complete
+2026-01-16 15:50:21,216 [IBKR] \u2705 Connected to Interactive Brokers
+2026-01-16 15:50:27,993 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:27] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:50:35,103 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:35] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:50:37,519 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:37] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:50:43,069 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:43] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:50:46,239 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:46] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:50:51,509 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:51] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:50:53,667 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:53] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:50:58,922 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:50:58] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:01,058 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:01] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:06,380 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:06] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:08,544 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:08] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:13,820 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:13] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:15,972 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:15] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:21,269 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:21] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:23,422 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:23] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:28,709 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:28] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:30,899 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:30] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:36,214 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:36] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:38,377 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:38] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:43,625 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:43] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:45,820 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:45] "GET /health HTTP/1.1" 200 -
+2026-01-16 15:51:51,064 [IBKR] 127.0.0.1 - - [16/Jan/2026 15:51:51] "GET /health HTTP/1.1" 200 -

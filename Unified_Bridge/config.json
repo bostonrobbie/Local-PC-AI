@@ -1,0 +1,48 @@
+{
+    "server": {
+        "host": "0.0.0.0",
+        "ibkr_port": 5001,
+        "mt5_port": 5000
+    },
+    "security": {
+        "webhook_secret": "fd70ac19-6154-4354-a8ba-b345b511ed93"
+    },
+    "tunnels": {
+        "ibkr_subdomain": "bostonrobbie-ibkr",
+        "mt5_subdomain": "major-cups-pick"
+    },
+    "ibkr": {
+        "tws_host": "127.0.0.1",
+        "tws_port": 7497,
+        "client_id": 1,
+        "paper_mode": true,
+        "tws_path": "C:\\Jts\\1043\\tws.exe"
+    },
+    "mt5": {
+        "login": 4000082688,
+        "password": "@JILLson9",
+        "server": "Darwinex-Live",
+        "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+        "magic_number": 999888,
+        "symbol_map": {
+            "ES1!": {
+                "name": "ES_H",
+                "multiplier": 1.0
+            },
+            "MES1!": {
+                "name": "ES_H",
+                "multiplier": 0.1
+            },
+            "NQ1!": {
+                "name": "NQ_H",
+                "multiplier": 1.0
+            },
+            "MNQ1!": {
+                "name": "NQ_H",
+                "multiplier": 0.1
+            },
+            "XAUUSD": "GC_G",
+            "BTCUSD": "BTCUSD"
+        }
+    }
+}
