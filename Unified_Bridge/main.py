@@ -7,6 +7,7 @@ import logging
 import socket
 from colorama import init, Fore, Style
 from src.manager import ProcessManager
+from src.qa_suite import run_qa
 
 init() # Colorama
 
@@ -44,6 +45,11 @@ def main():
     print(f"{Fore.CYAN}=========================================={Style.RESET_ALL}")
     print(f"{Fore.CYAN}       UNIFIED BRIDGE SUPERVISOR 🚀       {Style.RESET_ALL}")
     print(f"{Fore.CYAN}=========================================={Style.RESET_ALL}")
+    
+    # 0. RUN QA CHECK
+    if not run_qa():
+        print(f"{Fore.YELLOW}QA Failed. Press Enter to continue anyway (or Ctrl+C to stop)...{Style.RESET_ALL}")
+        input() # Wait for user ack if QA fails
 
     try:
         config = load_config()
@@ -172,12 +178,16 @@ def main():
                     print(f"{Fore.RED}⚠️ MT5 DISCONNECTED{Style.RESET_ALL}")
                     connection_states["MT5"] = False
             
-            # --- External Tunnel Verification (Public Internet) ---
-            ibkr_public = f"https://{ibkr_sub}.loca.lt"
-            mt5_public = f"https://{mt5_sub}.loca.lt"
-            mgr.check_public_health("IBKR_Tunnel", ibkr_public)
-            mgr.check_public_health("MT5_Tunnel", mt5_public)
+            # --- 2. START TUNNELS (Primary & Backup) ---
+            ibkr_sub = config['tunnels']['ibkr_subdomain']
+            mt5_sub = config['tunnels']['mt5_subdomain']
+
+            mgr.start_tunnel(config['server']['ibkr_port'], ibkr_sub, "IBKR_Tunnel")
+            mgr.start_backup_tunnel(config['server']['ibkr_port'], "IBKR_Backup", type="serveo")
             
+            mgr.start_tunnel(config['server']['mt5_port'], mt5_sub, "MT5_Tunnel")
+            mgr.start_backup_tunnel(config['server']['mt5_port'], "MT5_Backup", type="serveo")
+
             # --- External App Keep-Alive (Check every 60s) ---
             if time.time() - last_app_check > 60:
                 # Check TWS

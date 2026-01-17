@@ -4,8 +4,10 @@ import os
 import sys
 import logging
 import datetime
+import time
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import requests
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [MT5] %(message)s')
@@ -106,7 +108,47 @@ def execute_trade(data):
     vol = float(data.get('volume', 1.0)) * mult
     # Round logic could go here (min volume check)
     
-    # 4. Order Setup
+    # 4. Netting Logic (Simulate Netting on Hedging Account)
+    # Check for opposite positions
+    opposite_type = mt5.ORDER_TYPE_SELL if action == 'BUY' else mt5.ORDER_TYPE_BUY
+    positions = mt5.positions_get(symbol=symbol)
+    
+    if positions:
+        for pos in positions:
+            if pos.type == opposite_type:
+                logger.info(f"Netting: Closing opposite position {pos.ticket} ({pos.volume})")
+                
+                # Close this position
+                # Determine close price
+                tick = mt5.symbol_info_tick(symbol)
+                close_price = tick.ask if pos.type == mt5.ORDER_TYPE_SELL else tick.bid # Buy to close Sell (Ask), Sell to close Buy (Bid)
+                
+                req = {
+                    "action": mt5.TRADE_ACTION_DEAL,
+                    "symbol": symbol,
+                    "volume": pos.volume,
+                    "type": mt5.ORDER_TYPE_BUY if pos.type == mt5.ORDER_TYPE_SELL else mt5.ORDER_TYPE_SELL,
+                    "position": pos.ticket,
+                    "price": close_price,
+                    "magic": MT5_CONF.get('magic_number', 0),
+                    "comment": "Unified-Bridge-Netting",
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+                res = mt5.order_send(req)
+                if res.retcode != mt5.TRADE_RETCODE_DONE:
+                    logger.error(f"Netting Fail: {res.comment}")
+                else:
+                    # Reduce incoming volume by closed volume
+                    vol -= pos.volume
+                    
+    # 5. Order Setup (Remaining Volume)
+    if vol <= 0.0001: # EPSILON check
+        logger.info("Netting Completed. No remaining volume to open.")
+        return {"success": True, "message": "Closed via Netting"}
+
+    logger.info(f"Opening New Position: {action} {vol} {symbol}")
+    
     tick = mt5.symbol_info_tick(symbol)
     if not tick: return {"error": f"No Price for {symbol}"}
     
@@ -144,6 +186,41 @@ def execute_trade(data):
 app = Flask(__name__)
 CORS(app)
 
+# Helper to forward to IBKR
+def forward_to_ibkr(data):
+    """Forwards the webhook payload to the IBKR bridge."""
+    try:
+        # Prepare URL
+        ibkr_port = CONFIG['server'].get('ibkr_port', 5001)
+        url = f"http://127.0.0.1:{ibkr_port}/webhook"
+        
+        # Clone data to avoid mutating original
+        payload = data.copy()
+        payload['secret'] = CONFIG['security']['webhook_secret']
+        
+        # Symbol Cleanup for IBKR
+        # MT5 uses "MNQ1!", IBKR uses "MNQ" (usually continuous).
+        # We strip digits and ! from the end if it looks like a TradingView ticker
+        raw = payload.get('symbol', '').upper()
+        if '1!' in raw:
+            # Assume formatted like "MNQ1!" -> "MNQ"
+            clean = raw.replace('1!', '').replace('2!', '')
+            payload['symbol'] = clean
+            payload['secType'] = 'FUT' # Force Future if it was a TV future ticker
+            payload['exchange'] = 'GLOBEX' # Good default for US Futures
+        
+        # Send
+        # We use a short timeout so MT5 doesn't hang waiting for IBKR
+        try:
+            requests.post(url, json=payload, timeout=0.5) 
+        except requests.exceptions.ReadTimeout:
+            pass # We don't care about response, just fire and forget roughly
+        except Exception as e:
+            logger.error(f"Forwarding Fail: {e}")
+            
+    except Exception as e:
+        logger.error(f"Forwarding Error: {e}")
+
 @app.route('/health', methods=['GET'])
 def health():
     connected = mt5.terminal_info() is not None
@@ -156,9 +233,22 @@ def webhook():
     if data.get('secret') != CONFIG['security']['webhook_secret']:
          return jsonify({"error": "Unauthorized"}), 401
          
+    # 1. Forward to IBKR (Mirroring)
+    forward_to_ibkr(data)
+
     try:
+        start_time = time.time()
         res = execute_trade(data)
+        duration = (time.time() - start_time) * 1000
+        
         STATE["last_trade"] = f"{data.get('action')} {data.get('symbol')}"
+        
+        # Analytics Log
+        # We assume CWD is project root (via main.py)
+        with open('logs/analytics.csv', 'a') as f: 
+            ts = datetime.datetime.now().isoformat()
+            f.write(f"{ts},MT5,{data.get('symbol')},{data.get('action')},{duration:.2f},{'success' if 'order' in res else 'error'}\n")
+            
         return jsonify(res)
     except Exception as e:
         logger.error(f"Error: {e}")

@@ -16,7 +16,10 @@
         "tws_port": 7497,
         "client_id": 1,
         "paper_mode": true,
-        "tws_path": "C:\\Jts\\1043\\tws.exe"
+        "tws_path": "C:\\Jts\\1043\\tws.exe",
+        "username": "bostonrob",
+        "password": "@JILLson9",
+        "tws_login_mode": "ibc"
     },
     "mt5": {
         "login": 4000082688,

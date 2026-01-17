@@ -6,6 +6,8 @@ import json
 import logging
 import asyncio
 import threading
+import time
+import datetime
 from concurrent.futures import Future
 
 # FIX: multiple event loops issue with ib_async/eventkit
@@ -108,9 +110,19 @@ def webhook():
     
     # Execute on Background Loop
     try:
+        start_time = time.time()
         # Blocks Flask thread until result is available
         result = run_async(client.execute_trade(data))
+        duration = (time.time() - start_time) * 1000 # ms
+        
         STATE["last_trade"] = f"{data.get('action')} {data.get('symbol')}"
+        
+        # Analytics Log
+        with open('logs/analytics.csv', 'a') as f:
+            # Timestamp, Platform, Symbol, Action, Duration_ms, Status
+            ts = datetime.datetime.now().isoformat()
+            f.write(f"{ts},IBKR,{data.get('symbol')},{data.get('action')},{duration:.2f},{result.get('status','error')}\n")
+            
         return jsonify(result)
     except Exception as e:
         logger.error(f"Trade Error: {e}")

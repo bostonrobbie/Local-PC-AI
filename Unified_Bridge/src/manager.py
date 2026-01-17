@@ -28,26 +28,24 @@ class ProcessManager:
         logger.info(msg)
 
     def launch_external_app(self, name, path):
-        """Launches an external GUI application detached."""
-        if not path or not os.path.exists(path):
-            self.log(f"Cannot launch {name}: Path not found ({path})", Fore.RED)
-            return False
+        """Launches an external GUI application."""
+        # Check if we should use IBC for TWS
+        if "tws" in name.lower() and "ibc" in self.config.get('ibkr', {}).get('tws_login_mode', 'standard'):
+            path = "C:\\IBC\\StartIBC_Custom.bat"
+            name = "IBC_Auto_Login"
             
-        self.log(f"Launching {name} from {path}...", Fore.MAGENTA)
+        if not os.path.exists(path):
+            self.log(f"Cannot launch {name}: Path not found {path}", Fore.RED)
+            return False # Changed from `return` to `return False` for consistency with original logic
+            
+        self.log(f"Launching {name}...", Fore.CYAN)
         try:
-            # Detached process
             subprocess.Popen(
-                f'"{path}"', 
-                shell=True, 
-                close_fds=True,
-                creationflags=subprocess.DETACHED_PROCESS | 0x00000008 # CREATE_NO_WINDOW? No, we want window.
-                # Actually, simply Popen with shell=True and the quoted path works for GUI apps to detach mostly.
-                # For completely independent, we might want start command in shell.
+                [path], 
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                shell=False,
+                close_fds=True
             )
-            # Use 'start' command in Windows to truly detach
-            # subprocess.Popen(f'start "" "{path}"', shell=True) 
-            # But just Popen([path]) is usually fine if we don't wait.
-            
             return True
         except Exception as e:
             self.log(f"Failed to launch {name}: {e}", Fore.RED)
@@ -82,6 +80,29 @@ class ProcessManager:
         except Exception as e:
             self.log(f"Failed to start {name}: {e}", Fore.RED)
 
+    def start_tunnel(self, port, subdomain, name="Tunnel"):
+        """Starts a localtunnel instance."""
+        # Using npx localtunnel
+        cmd = f"npx localtunnel --port {port} --subdomain {subdomain}"
+        log_file = open(f"logs/{name}.log", "w")
+        
+        self.log(f"Starting {name} on port {port} (subdomain: {subdomain})...", Fore.CYAN)
+        return self.start_process(name, cmd, stdout=log_file, stderr=log_file)
+
+    def start_backup_tunnel(self, port, name="Backup_Tunnel", type="serveo"):
+        """Starts a backup SSH tunnel (Serveo/Pinggy)."""
+        if type == "serveo":
+            # Serveo exposes http on port 80 via ssh
+            # ssh -R 80:localhost:PORT serveo.net
+            # Note: Serveo might assign a random subdomain if custom is taken/not requested.
+            # We can request one with -R alias:80:localhost:PORT
+            alias = f"bostonrobbie-{port}" # Try to keep it unique but recognizable
+            cmd = f"ssh -o StrictHostKeyChecking=no -R {alias}:80:localhost:{port} serveo.net"
+            
+            log_file = open(f"logs/{name}.log", "w")
+            self.log(f"Starting {name} (Serveo) on port {port}...", Fore.MAGENTA)
+            return self.start_process(name, cmd, stdout=log_file, stderr=log_file)
+    
     def stop_process(self, name):
         """Stops a specific process."""
         if name in self.processes:
