@@ -54,7 +54,7 @@ class ProcessManager:
     def start_process(self, name, command, cwd=None, stdout=None, stderr=None):
         """Starts a process and tracks it."""
         if name in self.processes and self.processes[name].poll() is None:
-            self.log(f"{name} is already running.", Fore.YELLOW)
+            # Silent return to avoid log spam in lookups
             return
 
         self.log(f"Starting {name}...", Fore.CYAN)

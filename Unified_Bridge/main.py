@@ -110,14 +110,18 @@ def main():
     mt5_cmd = f'"{sys.executable}" -u src/mt5/bridge.py'
     mgr.start_process("MT5_Bridge", mt5_cmd, stdout=mt5_log, stderr=mt5_log)
 
-    # Tunnels
+    # Tunnels (Primary & Backup)
     ibkr_sub = config['tunnels']['ibkr_subdomain']
     ibkr_port = config['server']['ibkr_port']
-    mgr.start_process("IBKR_Tunnel", f"lt --port {ibkr_port} --subdomain {ibkr_sub}")
+    mgr.start_tunnel(ibkr_port, ibkr_sub, "IBKR_Tunnel")
+    mgr.start_backup_tunnel(ibkr_port, "IBKR_Backup", type="serveo")
 
     mt5_sub = config['tunnels']['mt5_subdomain']
     mt5_port = config['server']['mt5_port']
-    mgr.start_process("MT5_Tunnel", f"lt --port {mt5_port} --subdomain {mt5_sub}")
+    mgr.start_tunnel(mt5_port, mt5_sub, "MT5_Tunnel")
+    mgr.start_backup_tunnel(mt5_port, "MT5_Backup", type="serveo")
+
+    # Dashboard
 
     # Dashboard
     dash_log = open('logs/dashboard.log', 'a')
@@ -178,16 +182,6 @@ def main():
                     print(f"{Fore.RED}⚠️ MT5 DISCONNECTED{Style.RESET_ALL}")
                     connection_states["MT5"] = False
             
-            # --- 2. START TUNNELS (Primary & Backup) ---
-            ibkr_sub = config['tunnels']['ibkr_subdomain']
-            mt5_sub = config['tunnels']['mt5_subdomain']
-
-            mgr.start_tunnel(config['server']['ibkr_port'], ibkr_sub, "IBKR_Tunnel")
-            mgr.start_backup_tunnel(config['server']['ibkr_port'], "IBKR_Backup", type="serveo")
-            
-            mgr.start_tunnel(config['server']['mt5_port'], mt5_sub, "MT5_Tunnel")
-            mgr.start_backup_tunnel(config['server']['mt5_port'], "MT5_Backup", type="serveo")
-
             # --- External App Keep-Alive (Check every 60s) ---
             if time.time() - last_app_check > 60:
                 # Check TWS

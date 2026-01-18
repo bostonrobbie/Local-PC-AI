@@ -9,6 +9,10 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 
+# Add parent dir to path to find client
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from src.topstep.client import TopStepClient
+
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [MT5] %(message)s')
 logger = logging.getLogger("MT5_Bridge")
@@ -21,6 +25,14 @@ def load_config():
 
 CONFIG = load_config()
 MT5_CONF = CONFIG['mt5']
+
+# Initialize TopStep Client
+ts_client = TopStepClient(CONFIG)
+# Non-blocking validation on startup
+try:
+    ts_client.validate_connection()
+except Exception as e:
+    logger.error(f"TopStep Setup Error: {e}")
 
 # Global State
 STATE = {
@@ -242,6 +254,34 @@ def webhook():
         duration = (time.time() - start_time) * 1000
         
         STATE["last_trade"] = f"{data.get('action')} {data.get('symbol')}"
+        
+        # 2. Forward to TopStepX (Conditional Routing)
+        try:
+             # Logic: If source is NQ, send 7x to TopStep as MNQ
+             raw_symbol = data.get('symbol', '').upper()
+             base_symbol = raw_symbol.replace('1!', '').replace('2!', '')
+             
+             # Check mapping
+             ts_symbol = CONFIG.get('topstep', {}).get('symbol_map', {}).get(base_symbol, base_symbol)
+             
+             multiplier = 1.0
+             if base_symbol == "NQ":
+                 multiplier = 7.0
+                 logger.info(f"TopStep Routing: Applying 7x Multiplier for NQ ({data.get('volume')} -> {float(data.get('volume',0))*7})")
+                 
+             if CONFIG.get('topstep', {}).get('enabled', False):
+                 # Prepare specialized payload
+                 ts_payload = {
+                     "symbol": ts_symbol,
+                     "action": data.get('action'),
+                     "volume": float(data.get('volume', 0)) * multiplier
+                 }
+                 # execute_trade handles mock mode internally
+                 ts_res = ts_client.execute_trade(ts_payload)
+                 if ts_res.get('status') == 'error':
+                     logger.error(f"TopStep Send Failed: {ts_res.get('message')}")
+        except Exception as e:
+            logger.error(f"TopStep Logic Error: {e}")
         
         # Analytics Log
         # We assume CWD is project root (via main.py)

@@ -14,12 +14,26 @@
     "ibkr": {
         "tws_host": "127.0.0.1",
         "tws_port": 7497,
+        "api_key": "",
         "client_id": 1,
         "paper_mode": true,
         "tws_path": "C:\\Jts\\1043\\tws.exe",
         "username": "bostonrob",
         "password": "@JILLson9",
         "tws_login_mode": "ibc"
+    },
+    "topstep": {
+        "enabled": true,
+        "mock_mode": true,
+        "api_key": "MVtXBjXvECAdKyPIS0G2Kx14vfLlZU9Br138a5lUSFI=",
+        "base_url": "https://gateway-api-demo.s2f.projectx.com",
+        "max_retries": 3,
+        "symbol_map": {
+            "NQ": "MNQ",
+            "MNQ": "MNQ",
+            "ES": "MES",
+            "MES": "MES"
+        }
     },
     "mt5": {
         "login": 4000082688,

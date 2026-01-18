@@ -15,6 +15,7 @@ class IBKRClient:
         self.client_id = config['ibkr']['client_id']
         self.host = config['ibkr']['tws_host']
         self.port = config['ibkr']['tws_port']
+        self.api_key = config['ibkr'].get('api_key', '')
         
     async def connect(self):
         """Connects to TWS/Gateway."""
