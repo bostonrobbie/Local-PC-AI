@@ -126,6 +126,7 @@ def main():
 
     # --- 3. MAIN LOOP ---
     last_app_check = time.time()
+    first_run = True
     
     try:
         while True:
@@ -157,10 +158,12 @@ def main():
             ib_data = mgr.check_health("IBKR_Bridge", f"http://localhost:{config['server']['ibkr_port']}")
             if ib_data:
                 is_connected = (ib_data.get("status") == "connected")
-                if is_connected and not connection_states["IBKR"]:
+                if is_connected and (not connection_states["IBKR"] or first_run):
                     print(f"{Fore.GREEN}✅ IBKR/TWS CONNECTED! Ready for trades.{Style.RESET_ALL}")
                     connection_states["IBKR"] = True
-                elif not is_connected and connection_states["IBKR"]:
+                elif not is_connected and (connection_states["IBKR"] or first_run):
+                    # We only print disconnect on first run if we want to be explicit.
+                    # User asked for "needs api key" message.
                     print(f"{Fore.RED}⚠️ IBKR DISCONNECTED (API Key Required){Style.RESET_ALL}")
                     connection_states["IBKR"] = False
             
@@ -209,6 +212,7 @@ def main():
                     
                 last_app_check = time.time()
             
+            first_run = False
             time.sleep(2)
             
     except KeyboardInterrupt:

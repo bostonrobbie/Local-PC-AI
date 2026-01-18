@@ -170,8 +170,8 @@ class ProcessManager:
         """Pings a service to ensure it's responsive."""
         if name not in self.processes: return
         
-        # Warmup Grace Period (30s)
-        if time.time() - self.start_times.get(name, 0) < 30:
+        # Warmup Grace Period (5s)
+        if time.time() - self.start_times.get(name, 0) < 5:
             return
 
         try:
