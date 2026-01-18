@@ -237,7 +237,15 @@ def forward_to_ibkr(data):
 def health():
     connected = mt5.terminal_info() is not None
     STATE['connected'] = connected
-    return jsonify({"status": "connected" if connected else "disconnected", "last_trade": STATE['last_trade']})
+    
+    # Check TopStep Status
+    ts_connected = ts_client.connected
+    
+    return jsonify({
+        "status": "connected" if connected else "disconnected", 
+        "last_trade": STATE['last_trade'],
+        "topstep_status": "connected" if ts_connected else "disconnected"
+    })
 
 @app.route('/webhook', methods=['POST'])
 def webhook():

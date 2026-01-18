@@ -15,12 +15,13 @@
         "tws_host": "127.0.0.1",
         "tws_port": 7497,
         "api_key": "",
+        "base_url": "https://localhost:5000/v1/api",
         "client_id": 1,
         "paper_mode": true,
         "tws_path": "C:\\Jts\\1043\\tws.exe",
-        "username": "bostonrob",
-        "password": "@JILLson9",
-        "tws_login_mode": "ibc"
+        "username": "",
+        "password": "",
+        "tws_login_mode": "manual"
     },
     "topstep": {
         "enabled": true,

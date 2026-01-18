@@ -80,15 +80,8 @@ def main():
     # 2.0 Auto-Launch External Apps
     print("🚀 Checking External Applications...")
     
-    # Check TWS
-    if not mgr.check_tws_process():
-        print(f"{Fore.YELLOW}TWS not found. Launching...{Style.RESET_ALL}")
-        tws_path = config['ibkr'].get('tws_path')
-        if tws_path:
-            mgr.launch_external_app("TWS", tws_path)
-            time.sleep(15) # Wait for TWS to start
-        else:
-            print(f"{Fore.RED}TWS Path not configured in config.json!{Style.RESET_ALL}")
+    # TWS Launch Removed as per request (API Key Mode)
+    # if not mgr.check_tws_process(): ... (Removed)
     
     # Check MT5
     if not mgr.check_mt5_process():
@@ -168,7 +161,7 @@ def main():
                     print(f"{Fore.GREEN}✅ IBKR/TWS CONNECTED! Ready for trades.{Style.RESET_ALL}")
                     connection_states["IBKR"] = True
                 elif not is_connected and connection_states["IBKR"]:
-                    print(f"{Fore.RED}⚠️ IBKR/TWS DISCONNECTED{Style.RESET_ALL}")
+                    print(f"{Fore.RED}⚠️ IBKR DISCONNECTED (API Key Required){Style.RESET_ALL}")
                     connection_states["IBKR"] = False
             
             # MT5 Check
@@ -181,15 +174,33 @@ def main():
                 elif not is_connected and connection_states["MT5"]:
                     print(f"{Fore.RED}⚠️ MT5 DISCONNECTED{Style.RESET_ALL}")
                     connection_states["MT5"] = False
+
+            # TopStep Check (New)
+            if 'TopStep' not in connection_states: connection_states['TopStep'] = False
             
-            # --- External App Keep-Alive (Check every 60s) ---
+            # Simple check based on log presence or we can hit the client if exposed
+            # Since TopStepClient is inside MT5 bridge, we can check via MT5 bridge health or just assume if MT5 is up and logs say so.
+            # Better: MT5 Bridge health endpoint should report TopStep status.
+            
+            # For now, let's look for the log line or just assume connected if config is valid?
+            # Actually, let's update MT5 bridge health to include TopStep status.
+            # But avoiding too many file edits, let's check log file for "TopStepX Connection Validated"
+            
+            # Or better, just print it once on startup and rely on logs?
+            # User asked for a message.
+            # Let's add it to the startup sequence connection list.
+            
+            # Ideally: Check manager.check_health("MT5_Bridge") -> returns {..., "topstep": "connected"}
+            # I will assume I'll update MT5 bridge health first.
+            if mt5_data and mt5_data.get("topstep_status") == "connected" and not connection_states["TopStep"]:
+                 print(f"{Fore.GREEN}✅ TOPSTEP CONNECTED! (via MT5 Bridge){Style.RESET_ALL}")
+                 connection_states["TopStep"] = True
+            elif mt5_data and mt5_data.get("topstep_status") != "connected" and connection_states["TopStep"]:
+                 print(f"{Fore.YELLOW}⚠️ TOPSTEP DISCONNECTED{Style.RESET_ALL}")
+                 connection_states["TopStep"] = False
+            
+    # --- External App Keep-Alive (Check every 60s) ---
             if time.time() - last_app_check > 60:
-                # Check TWS
-                if not mgr.check_tws_process():
-                    print(f"{Fore.RED}ALERT: TWS not running! Attempting re-launch...{Style.RESET_ALL}")
-                    tws_path = config['ibkr'].get('tws_path')
-                    if tws_path: mgr.launch_external_app("TWS", tws_path)
-                
                 # Check MT5
                 if not mgr.check_mt5_process():
                     print(f"{Fore.RED}ALERT: MT5 not running! Attempting re-launch...{Style.RESET_ALL}")

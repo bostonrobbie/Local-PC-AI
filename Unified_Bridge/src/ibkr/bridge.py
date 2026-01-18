@@ -21,6 +21,7 @@ except RuntimeError:
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.ibkr.client import IBKRClient
+from src.ibkr.rest_client import IBKRWebClient
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [IBKR] %(message)s')
@@ -55,7 +56,17 @@ def start_loop(loop):
     # Instantiate Client INSIDE the thread so IB() picks up this loop
     global client
     try:
-        client = IBKRClient(config)
+        # Client Factory Logic
+        mode = config['ibkr'].get('tws_login_mode', 'manual')
+        api_key = config['ibkr'].get('api_key', '')
+        
+        if mode == 'manual' and api_key:
+             logger.info("Initializing IBKR Web Client (REST Mode)...")
+             client = IBKRWebClient(config)
+        else:
+             logger.info("Initializing IBKR TWS Client (Socket Mode)...")
+             client = IBKRClient(config)
+             
         client_ready.set()
         logger.info("IBKR Client Initialized.")
         
