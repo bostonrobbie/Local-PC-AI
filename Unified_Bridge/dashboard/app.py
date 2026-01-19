@@ -27,6 +27,17 @@ def check_status(url):
 # Layout
 st.title("🌉 Unified Bridge Monitor")
 
+with st.sidebar:
+    st.header("🤖 AI Tools")
+    if st.button("Launch Claude Code"):
+        try:
+            import subprocess
+            subprocess.Popen('start cmd /k "claude"', shell=True)
+            st.toast("Launching Claude CLI...")
+        except Exception as e:
+            st.error(f"Failed to launch: {e}")
+
+
 col1, col2 = st.columns(2)
 
 # --- IBKR STATUS ---

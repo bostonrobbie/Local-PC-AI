@@ -270,12 +270,27 @@ def webhook():
              base_symbol = raw_symbol.replace('1!', '').replace('2!', '')
              
              # Check mapping
-             ts_symbol = CONFIG.get('topstep', {}).get('symbol_map', {}).get(base_symbol, base_symbol)
+             eval_mode = CONFIG.get('topstep', {}).get('eval_mode', False)
              
              multiplier = 1.0
-             if base_symbol == "NQ":
-                 multiplier = 7.0
-                 logger.info(f"TopStep Routing: Applying 7x Multiplier for NQ ({data.get('volume')} -> {float(data.get('volume',0))*7})")
+             ts_symbol = base_symbol
+             
+             if eval_mode:
+                 # EVAL MODE: Use Mini (NQ) directly, 5x Multiplier
+                 if base_symbol in ["NQ", "ES"]:
+                     ts_symbol = base_symbol # Force Mini
+                     multiplier = 5.0
+                     logger.info(f"TopStep Eval Mode: Using 5 Minis {ts_symbol} (x5)")
+                 else:
+                     # Fallback to map for others
+                     ts_symbol = CONFIG.get('topstep', {}).get('symbol_map', {}).get(base_symbol, base_symbol)
+             else:
+                 # FUNDED MODE: Use Micro (MNQ), 1:7 (for NQ)
+                 ts_symbol = CONFIG.get('topstep', {}).get('symbol_map', {}).get(base_symbol, base_symbol)
+                 
+                 if base_symbol == "NQ":
+                     multiplier = 7.0
+                     logger.info(f"TopStep Funded Mode: Applying 7x Multiplier for NQ ({data.get('volume')} -> {float(data.get('volume',0))*7})")
                  
              if CONFIG.get('topstep', {}).get('enabled', False):
                  # Prepare specialized payload
