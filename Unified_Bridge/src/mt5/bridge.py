@@ -34,6 +34,10 @@ try:
 except Exception as e:
     logger.error(f"TopStep Setup Error: {e}")
 
+# Log Eval Mode Status
+eval_mode_status = CONFIG.get('topstep', {}).get('eval_mode', False)
+logger.info(f"TopStep Eval Mode: {'ENABLED (5 Minis)' if eval_mode_status else 'DISABLED (Funded/7 Micros)'}")
+
 # Global State
 STATE = {
     "connected": False,
