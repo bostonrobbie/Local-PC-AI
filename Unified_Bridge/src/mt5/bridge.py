@@ -7,15 +7,32 @@ import datetime
 import time
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_cors import CORS
 import requests
+import concurrent.futures
+from logging.handlers import RotatingFileHandler
+from waitress import serve
 
 # Add parent dir to path to find client
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from src.topstep.client import TopStepClient
+from src.utils.alerts import AlertManager
+from src.utils.database import DatabaseManager
 
 # Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [MT5] %(message)s')
+# Logging
+# Use RotatingFileHandler: Max 5MB, keep 5 backups
+log_handler = RotatingFileHandler('logs/mt5.log', maxBytes=5*1024*1024, backupCount=5)
+log_handler.setFormatter(logging.Formatter('%(asctime)s [MT5] %(message)s'))
+log_handler.setLevel(logging.INFO)
+
 logger = logging.getLogger("MT5_Bridge")
+logger.setLevel(logging.INFO)
+logger.addHandler(log_handler)
+# Also log to console for dev visibility
+console = logging.StreamHandler()
+console.setFormatter(logging.Formatter('%(asctime)s [MT5] %(message)s'))
+logger.addHandler(console)
 
 def load_config():
     # Load from parent dir
@@ -28,6 +45,13 @@ MT5_CONF = CONFIG['mt5']
 
 # Initialize TopStep Client
 ts_client = TopStepClient(CONFIG)
+# Initialize Utils
+alerts = AlertManager(CONFIG)
+db = DatabaseManager('trades.db')
+
+# Global Executor for Parallel Tasks
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+
 # Non-blocking validation on startup
 try:
     ts_client.validate_connection()
@@ -36,7 +60,7 @@ except Exception as e:
 
 # Log Eval Mode Status
 eval_mode_status = CONFIG.get('topstep', {}).get('eval_mode', False)
-logger.info(f"TopStep Eval Mode: {'ENABLED (5 Minis)' if eval_mode_status else 'DISABLED (Funded/7 Micros)'}")
+logger.info(f"TopStep Eval Mode: {'ENABLED (1 Mini)' if eval_mode_status else 'DISABLED (Funded/7 Micros)'}")
 
 # Global State
 STATE = {
@@ -67,25 +91,47 @@ def initialize_mt5():
         logger.error(f"Init Error: {e}")
         return False
 
-def close_positions(symbol):
-    positions = mt5.positions_get(symbol=symbol)
-    if not positions:
-        return {"status": "success", "message": f"No positions for {symbol}"}
+def close_positions(symbol, raw_symbol=None):
+    """
+    Closes all positions for a given symbol, using fuzzy matching to handle
+    broker suffix mismatches (e.g. NQ1! vs NQ_H).
+    """
+    # Build robust search set
+    search_symbols = {symbol}
+    if raw_symbol:
+        search_symbols.add(raw_symbol)
+        clean = raw_symbol.replace('1!', '').replace('2!', '')
+        search_symbols.add(clean)
+        search_symbols.add(clean + "_H")
+        
+    logger.info(f"Closing Positions for {symbol}. Scanning for: {search_symbols}")
+
+    all_positions = mt5.positions_get()
+    if not all_positions:
+        return {"status": "success", "message": "No open positions to close."}
+
+    # Filter positions
+    target_positions = [p for p in all_positions if p.symbol in search_symbols]
+    
+    if not target_positions:
+        return {"status": "success", "message": f"No positions found matching {search_symbols}"}
 
     count = 0
-    for pos in positions:
-        tick = mt5.symbol_info_tick(symbol)
-        if not tick: continue
+    for pos in target_positions:
+        tick = mt5.symbol_info_tick(pos.symbol) # Use the ACTUAL symbol of the position
+        if not tick: 
+            logger.warning(f"No tick for {pos.symbol}, skipping close.")
+            continue
         
         type_order = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
         price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
         
         req = {
             "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,
+            "symbol": pos.symbol, # Use exact position symbol
             "volume": pos.volume,
             "type": type_order,
-            "position": pos.ticket,
+            "position": pos.ticket, # CRITICAL: Close by Ticket
             "price": price,
             "magic": MT5_CONF.get('magic_number', 0),
             "comment": "Unified-Bridge-Close",
@@ -95,6 +141,9 @@ def close_positions(symbol):
         res = mt5.order_send(req)
         if res.retcode == mt5.TRADE_RETCODE_DONE:
             count += 1
+            logger.info(f"Closed position {pos.ticket} ({pos.symbol})")
+        else:
+            logger.error(f"Failed to close {pos.ticket}: {res.comment}")
             
     return {"status": "success", "closed": count}
 
@@ -114,11 +163,14 @@ def execute_trade(data):
             symbol = mapping
 
     logger.info(f"Trade: {data.get('action')} {raw} -> {symbol} (x{mult})")
+    
+    # Force uppercase for safety
+    symbol = symbol.upper()
 
     # 2. Action
     action = data.get('action', '').upper()
     if action in ['CLOSE', 'EXIT', 'FLATTEN']:
-        return close_positions(symbol)
+        return close_positions(symbol, raw_symbol=raw)
 
     # 3. Volume
     vol = float(data.get('volume', 1.0)) * mult
@@ -127,7 +179,23 @@ def execute_trade(data):
     # 4. Netting Logic (Simulate Netting on Hedging Account)
     # Check for opposite positions
     opposite_type = mt5.ORDER_TYPE_SELL if action == 'BUY' else mt5.ORDER_TYPE_BUY
-    positions = mt5.positions_get(symbol=symbol)
+    
+    # 4.1 Get all positions to debug mismatch
+    all_positions = mt5.positions_get()
+    if all_positions:
+        logger.info(f"Open Positions in MT5: {[p.symbol for p in all_positions]}")
+    else:
+        logger.info("No Open Positions in MT5.")
+
+    # 4.2 specific symbol lookup (Try raw, mapped, and common variations)
+    search_symbols = {symbol, raw, raw.replace('1!', ''), raw.replace('1!', '') + "_H"}
+    positions = []
+    
+    # Filter all positions that match any of our search symbols
+    if all_positions:
+        for p in all_positions:
+            if p.symbol in search_symbols:
+                positions.append(p)
     
     if positions:
         for pos in positions:
@@ -136,7 +204,7 @@ def execute_trade(data):
                 
                 # Close this position
                 # Determine close price
-                tick = mt5.symbol_info_tick(symbol)
+                tick = mt5.symbol_info_tick(pos.symbol) # Use pos.symbol to be safe
                 close_price = tick.ask if pos.type == mt5.ORDER_TYPE_SELL else tick.bid # Buy to close Sell (Ask), Sell to close Buy (Bid)
                 
                 req = {
@@ -255,11 +323,18 @@ def health():
 def webhook():
     data = request.json
     if data.get('secret') != CONFIG['security']['webhook_secret']:
+         logger.warning(f"Unauthorized Webhook Attempt: {request.remote_addr}")
          return jsonify({"error": "Unauthorized"}), 401
          
-    # 1. Forward to IBKR (Mirroring)
-    forward_to_ibkr(data)
+    logger.info(f"📥 Received Webhook: {json.dumps(data)}")
+         
+    # 1. Forward to IBKR (Parallel - Fire & Forget)
+    executor.submit(forward_to_ibkr, data)
 
+    # 2. Forward to TopStepX (Parallel)
+    executor.submit(handle_topstep_logic, data)
+
+    # 3. Execute MT5 (Main Thread - Critical Path)
     try:
         start_time = time.time()
         res = execute_trade(data)
@@ -267,64 +342,76 @@ def webhook():
         
         STATE["last_trade"] = f"{data.get('action')} {data.get('symbol')}"
         
-        # 2. Forward to TopStepX (Conditional Routing)
-        try:
-             # Logic: If source is NQ, send 7x to TopStep as MNQ
-             raw_symbol = data.get('symbol', '').upper()
-             base_symbol = raw_symbol.replace('1!', '').replace('2!', '')
-             
-             # Check mapping
-             eval_mode = CONFIG.get('topstep', {}).get('eval_mode', False)
-             
-             multiplier = 1.0
-             ts_symbol = base_symbol
-             
-             if eval_mode:
-                 # EVAL MODE: Use Mini (NQ) directly, 5x Multiplier
-                 if base_symbol in ["NQ", "ES"]:
-                     ts_symbol = base_symbol # Force Mini
-                     multiplier = 5.0
-                     logger.info(f"TopStep Eval Mode: Using 5 Minis {ts_symbol} (x5)")
-                 else:
-                     # Fallback to map for others
-                     ts_symbol = CONFIG.get('topstep', {}).get('symbol_map', {}).get(base_symbol, base_symbol)
-             else:
-                 # FUNDED MODE: Use Micro (MNQ), 1:7 (for NQ)
-                 ts_symbol = CONFIG.get('topstep', {}).get('symbol_map', {}).get(base_symbol, base_symbol)
-                 
-                 if base_symbol == "NQ":
-                     multiplier = 7.0
-                     logger.info(f"TopStep Funded Mode: Applying 7x Multiplier for NQ ({data.get('volume')} -> {float(data.get('volume',0))*7})")
-                 
-             if CONFIG.get('topstep', {}).get('enabled', False):
-                 # Prepare specialized payload
-                 ts_payload = {
-                     "symbol": ts_symbol,
-                     "action": data.get('action'),
-                     "volume": float(data.get('volume', 0)) * multiplier
-                 }
-                 # execute_trade handles mock mode internally
-                 ts_res = ts_client.execute_trade(ts_payload)
-                 if ts_res.get('status') == 'error':
-                     logger.error(f"TopStep Send Failed: {ts_res.get('message')}")
-        except Exception as e:
-            logger.error(f"TopStep Logic Error: {e}")
+        status = 'success' if 'order' in res or res.get('status') == 'success' else 'error-mt5'
         
-        # Analytics Log
-        # We assume CWD is project root (via main.py)
-        with open('logs/analytics.csv', 'a') as f: 
-            ts = datetime.datetime.now().isoformat()
-            f.write(f"{ts},MT5,{data.get('symbol')},{data.get('action')},{duration:.2f},{'success' if 'order' in res else 'error'}\n")
+        # Database Log
+        db.log_trade("MT5", data, status, duration, details=str(res))
+        
+        # Alert (Only on success to avoid spamming errors if simple check fail)
+        if status == 'success':
+            alerts.send_trade_alert(data, platform="MT5")
             
         return jsonify(res)
     except Exception as e:
         logger.error(f"Error: {e}")
+        alerts.send_error_alert(str(e), context="MT5_Bridge_Main")
         return jsonify({"error": str(e)}), 500
+
+def handle_topstep_logic(data):
+    """Encapsulated Topstep Logic for Parallel Execution"""
+    try:
+         # Logic: If source is NQ, send 7x to TopStep as MNQ
+         raw_symbol = data.get('symbol', '').upper()
+         base_symbol = raw_symbol.replace('1!', '').replace('2!', '')
+         
+         # Check mapping
+         eval_mode = CONFIG.get('topstep', {}).get('eval_mode', False)
+         
+         multiplier = 1.0
+         ts_symbol = base_symbol
+         
+         if eval_mode:
+             # EVAL MODE: Use Mini (NQ) directly, 1x Multiplier (Modified)
+             if base_symbol in ["NQ", "ES"]:
+                 ts_symbol = base_symbol # Force Mini
+                 multiplier = 1.0
+                 logger.info(f"TopStep Eval Mode: Using 1 Mini {ts_symbol} (x1)")
+             else:
+                 # Fallback to map for others
+                 ts_symbol = CONFIG.get('topstep', {}).get('symbol_map', {}).get(base_symbol, base_symbol)
+         else:
+             # FUNDED MODE: Use Micro (MNQ), 1:7 (for NQ)
+             ts_symbol = CONFIG.get('topstep', {}).get('symbol_map', {}).get(base_symbol, base_symbol)
+             
+             if base_symbol == "NQ":
+                 multiplier = 7.0
+                 logger.info(f"TopStep Funded Mode: Applying 7x Multiplier for NQ ({data.get('volume')} -> {float(data.get('volume',0))*7})")
+             
+         if CONFIG.get('topstep', {}).get('enabled', False):
+             # Prepare specialized payload
+             ts_payload = {
+                 "symbol": ts_symbol,
+                 "action": data.get('action'),
+                 "volume": float(data.get('volume', 0)) * multiplier
+             }
+             # execute_trade handles mock mode internally
+             ts_res = ts_client.execute_trade(ts_payload)
+             
+             # Enhanced Logging
+             log_level = logging.INFO if ts_res.get('status') == 'success' else logging.ERROR
+             logger.log(log_level, f"TopStep Response: {ts_res}")
+             
+             # DB Log for Topstep
+             status = ts_res.get('status', 'unknown')
+             db.log_trade("TopStep", ts_payload, status, details=str(ts_res))
+
+    except Exception as e:
+        logger.error(f"TopStep Logic Error: {e}")
 
 if __name__ == "__main__":
     if not initialize_mt5():
         logger.warning("MT5 Init Failed - Running in Offline Mode")
         
     port = CONFIG['server']['mt5_port']
-    logger.info(f"Starting MT5 Bridge on {port}")
-    app.run(host="0.0.0.0", port=port)
+    logger.info(f"Starting MT5 Bridge on {port} (Waitress Production Server)")
+    serve(app, host="0.0.0.0", port=port, threads=6)

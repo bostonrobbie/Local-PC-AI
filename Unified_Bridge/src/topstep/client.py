@@ -17,10 +17,10 @@ class TopStepClient:
         self.symbol_map = self.config.get('symbol_map', {})
         self.max_retries = self.config.get('max_retries', 3)
         
-        # State
         self.consecutive_failures = 0
         self.circuit_open = False
         self.connected = False
+        self.session = requests.Session()
 
     def validate_connection(self):
         """Checks connection to API on startup."""
@@ -44,7 +44,7 @@ class TopStepClient:
             url = f"{self.base_url}/api/User/profile" # Hypothetical endpoint, or just check 401 on any
             
             # Use short timeout just for ping
-            response = requests.get(url, headers=headers, timeout=5)
+            response = self.session.get(url, headers=headers, timeout=5)
             
             if response.status_code in [200, 404]: # 404 means URL reached but path wrong (connection OK)
                 logger.info(f"{Fore.GREEN}TopStepX Connection Validated (Status: {response.status_code}){Style.RESET_ALL}")
@@ -107,7 +107,7 @@ class TopStepClient:
         }
         
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=3)
+            response = self.session.post(url, json=payload, headers=headers, timeout=3)
             
             if response.status_code == 200:
                 self.consecutive_failures = 0 # Reset
@@ -115,7 +115,8 @@ class TopStepClient:
                 return {"status": "success", "data": response.json()}
             else:
                 self._handle_failure(f"HTTP {response.status_code}: {response.text}")
-                return {"status": "error", "code": response.status_code}
+                logger.error(f"TopStep Error Values: {response.text}")
+                return {"status": "error", "code": response.status_code, "body": response.text}
                 
         except Exception as e:
             self._handle_failure(str(e))

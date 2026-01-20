@@ -8,3 +8,4 @@ streamlit
 watchdog
 colorama
 psutil
+waitress

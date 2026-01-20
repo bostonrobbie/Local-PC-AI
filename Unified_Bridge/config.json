@@ -25,7 +25,7 @@
     },
     "topstep": {
         "enabled": true,
-        "mock_mode": true,
+        "mock_mode": false,
         "eval_mode": true,
         "api_key": "MVtXBjXvECAdKyPIS0G2Kx14vfLlZU9Br138a5lUSFI=",
         "base_url": "https://gateway-api-demo.s2f.projectx.com",
@@ -63,5 +63,9 @@
             "XAUUSD": "GC_G",
             "BTCUSD": "BTCUSD"
         }
+    },
+    "alerts": {
+        "enabled": false,
+        "discord_webhook": ""
     }
 }
