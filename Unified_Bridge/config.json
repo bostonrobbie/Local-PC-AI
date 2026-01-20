@@ -28,7 +28,7 @@
         "mock_mode": false,
         "eval_mode": true,
         "api_key": "MVtXBjXvECAdKyPIS0G2Kx14vfLlZU9Br138a5lUSFI=",
-        "base_url": "https://gateway-api-demo.s2f.projectx.com",
+        "base_url": "https://api.topstepx.com",
         "max_retries": 3,
         "symbol_map": {
             "NQ": "MNQ",
@@ -43,6 +43,10 @@
         "server": "Darwinex-Live",
         "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
         "magic_number": 999888,
+        "execution": {
+            "default_type": "LIMIT",
+            "slippage_offset_ticks": 2
+        },
         "symbol_map": {
             "ES1!": {
                 "name": "ES_H",

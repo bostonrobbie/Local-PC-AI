@@ -65,8 +65,22 @@ logger.info(f"TopStep Eval Mode: {'ENABLED (1 Mini)' if eval_mode_status else 'D
 # Global State
 STATE = {
     "connected": False,
+    "connected": False,
     "last_trade": "None"
 }
+
+# Optimization: Symbol Cache to avoid IPC calls for static data (Point, Digits)
+SYMBOL_CACHE = {}
+
+def warm_cache(symbols):
+    """Pre-loads symbol info into cache."""
+    for s in symbols:
+        info = mt5.symbol_info(s)
+        if info:
+            SYMBOL_CACHE[s] = info
+            logger.info(f"Cached Info for {s}: Point={info.point}")
+        else:
+            logger.warning(f"Failed to cache {s}")
 
 def initialize_mt5():
     """Connects to MT5 terminal."""
@@ -86,6 +100,13 @@ def initialize_mt5():
             
         STATE["connected"] = True
         logger.info(f"✅ Connected to MT5: {MT5_CONF['server']}")
+        STATE["connected"] = True
+        logger.info(f"✅ Connected to MT5: {MT5_CONF['server']}")
+        
+        # Warm Cache
+        common_symbols = ["NQ", "MNQ", "ES", "MES", "NQ_H", "ES_H"]
+        warm_cache(common_symbols)
+        
         return True
     except Exception as e:
         logger.error(f"Init Error: {e}")
@@ -233,20 +254,54 @@ def execute_trade(data):
 
     logger.info(f"Opening New Position: {action} {vol} {symbol}")
     
+    # 5. Order Type & Price Logic -- STRICT LIMIT ORDER UPDATE
+    default_type = MT5_CONF.get('execution', {}).get('default_type', 'MARKET')
+    order_type_str = data.get('type', default_type).upper()
+    
     tick = mt5.symbol_info_tick(symbol)
     if not tick: return {"error": f"No Price for {symbol}"}
+
+    action_type = mt5.TRADE_ACTION_DEAL # Default
+    ot = mt5.ORDER_TYPE_BUY if action == 'BUY' else mt5.ORDER_TYPE_SELL
+    ex_price = tick.ask if action == 'BUY' else tick.bid # Default Market Price (Crossing Spread)
     
-    order_type_str = data.get('type', 'MARKET').upper()
-    price = float(data.get('price', 0.0))
-    
-    if order_type_str == 'LIMIT' and price > 0:
+    if order_type_str == 'LIMIT':
+        # "Strict Limit" (Marketable):
+        # We want to Fill Immediately, but Cap the Slippage.
+        # Buy Limit @ Current Ask + Offset (Allows filling up to X ticks worse)
+        # Sell Limit @ Current Bid - Offset (Allows filling down to X ticks worse)
         action_type = mt5.TRADE_ACTION_PENDING
         ot = mt5.ORDER_TYPE_BUY_LIMIT if action == 'BUY' else mt5.ORDER_TYPE_SELL_LIMIT
-        ex_price = price
-    else:
-        action_type = mt5.TRADE_ACTION_DEAL
-        ot = mt5.ORDER_TYPE_BUY if action == 'BUY' else mt5.ORDER_TYPE_SELL
-        ex_price = tick.ask if action == 'BUY' else tick.bid
+        
+        # Get Slippage Tolerance from Config
+        # Get Slippage Tolerance from Config
+        offset_ticks = MT5_CONF.get('execution', {}).get('slippage_offset_ticks', 5) # Default 5 ticks safety
+        
+        # Optimization: Use Cache
+        info = SYMBOL_CACHE.get(symbol)
+        if not info:
+             # Fallback if not cached
+             info = mt5.symbol_info(symbol)
+             if info: SYMBOL_CACHE[symbol] = info # Cache it now
+        
+        point = info.point if info else 0.0001 # Fallback default
+        offset_val = point * offset_ticks
+
+        signal_price = float(data.get('price', 0.0))
+        if signal_price > 0:
+            # Signal has specific price? We trust it exactly? 
+            # Or do we add slippage to THAT too?
+            # Usually strict limit means "At this price OR BETTER".
+            # Let's use signal price if given.
+            ex_price = signal_price
+        else:
+            # Marketable Limit Logic
+            if action == 'BUY':
+                # Buy Limit @ Ask + Tolerance
+                ex_price = tick.ask + offset_val
+            else:
+                # Sell Limit @ Bid - Tolerance
+                ex_price = tick.bid - offset_val
 
     req = {
         "action": action_type,
@@ -255,16 +310,31 @@ def execute_trade(data):
         "type": ot,
         "price": ex_price,
         "magic": MT5_CONF.get('magic_number', 0),
-        "comment": "Unified-Bridge",
+        "comment": "Unified-Bridge-Limit",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC if action_type == mt5.TRADE_ACTION_DEAL else mt5.ORDER_FILLING_RETURN
+        "type_filling": mt5.ORDER_FILLING_RETURN, # Return allowed for pending
     }
     
+    # ... (Order Sending)
     res = mt5.order_send(req)
     if res.retcode != mt5.TRADE_RETCODE_DONE:
         return {"error": f"MT5 Fail: {res.comment} ({res.retcode})"}
         
-    return {"success": True, "order": res.order}
+    # Calculate Slippage
+    actual_price = res.price
+    slippage = 0.0
+    if ex_price > 0 and actual_price > 0:
+        slippage = abs(actual_price - ex_price)
+        
+    logger.info(f"Trade Executed. Expected: {ex_price}, Actual: {actual_price}, Slippage: {slippage:.2f}")
+
+    return {
+        "success": True, 
+        "order": res.order, 
+        "expected_price": ex_price, 
+        "executed_price": actual_price, 
+        "slippage": slippage
+    }
 
 # Flask
 app = Flask(__name__)
@@ -344,8 +414,17 @@ def webhook():
         
         status = 'success' if 'order' in res or res.get('status') == 'success' else 'error-mt5'
         
-        # Database Log
-        db.log_trade("MT5", data, status, duration, details=str(res))
+        # Database Log (Enhanced)
+        db.log_trade(
+            "MT5", 
+            data, 
+            status, 
+            duration, 
+            details=str(res),
+            expected_price=res.get('expected_price', 0.0),
+            executed_price=res.get('executed_price', 0.0),
+            slippage=res.get('slippage', 0.0)
+        )
         
         # Alert (Only on success to avoid spamming errors if simple check fail)
         if status == 'success':

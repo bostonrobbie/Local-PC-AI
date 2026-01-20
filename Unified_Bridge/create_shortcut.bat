@@ -8,7 +8,7 @@ set "ICON=%~dp0dashboard\app.py"
 echo Creating shortcut to %TARGET%...
 
 set PWS=powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -Command
-set "ICON=C:\Windows\py.exe"
+set "ICON=%SystemRoot%\System32\cmd.exe"
 %PWS% "$s=(New-Object -COM WScript.Shell).CreateShortcut('%SHORTCUT%');$s.TargetPath='%TARGET%';$s.WorkingDirectory='%~dp0';$s.IconLocation='%ICON%';$s.Save()"
 
 echo Done! Shortcut on Desktop.

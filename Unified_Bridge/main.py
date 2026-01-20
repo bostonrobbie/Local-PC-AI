@@ -46,6 +46,15 @@ def main():
     print(f"{Fore.CYAN}       UNIFIED BRIDGE SUPERVISOR 🚀       {Style.RESET_ALL}")
     print(f"{Fore.CYAN}=========================================={Style.RESET_ALL}")
     
+    # --- LATENCY OPTIMIZATION ---
+    try:
+        import psutil
+        p = psutil.Process(os.getpid())
+        p.nice(psutil.HIGH_PRIORITY_CLASS)
+        print(f"{Fore.GREEN}🚀 High Priority Mode Enabled (Latency Optimized){Style.RESET_ALL}")
+    except Exception as e:
+        print(f"{Fore.YELLOW}⚠️  Could not set High Priority: {e}{Style.RESET_ALL}")
+
     # 0. RUN QA CHECK
     if not run_qa():
         print(f"{Fore.YELLOW}QA Failed. Press Enter to continue anyway (or Ctrl+C to stop)...{Style.RESET_ALL}")
@@ -129,6 +138,7 @@ def main():
     first_run = True
     
     try:
+        print(f"\n{Fore.WHITE}⏳ Waiting for subsystem connections...{Style.RESET_ALL}")
         while True:
             mgr.monitor()
             

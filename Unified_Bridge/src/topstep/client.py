@@ -21,6 +21,26 @@ class TopStepClient:
         self.circuit_open = False
         self.connected = False
         self.session = requests.Session()
+        
+        # Keep-Alive
+        import threading
+        self.running = True
+        self.ka_thread = threading.Thread(target=self._keep_alive_loop, daemon=True)
+        self.ka_thread.start()
+
+    def _keep_alive_loop(self):
+        """Periodically pings to keep SSL session warm."""
+        if not self.enabled or self.mock_mode: return
+        while self.running:
+            time.sleep(45) # Ping every 45s
+            try:
+                if self.connected:
+                    headers = {"Authorization": f"Bearer {self.api_key}"}
+                    # Low cost ping
+                    self.session.get(f"{self.base_url}/api/User/profile", headers=headers, timeout=5)
+                    # logger.debug("Keep-Alive Ping Sent") # Commented to avoid spam
+            except:
+                pass
 
     def validate_connection(self):
         """Checks connection to API on startup."""
@@ -97,7 +117,6 @@ class TopStepClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        
         payload = {
             "symbol": symbol,
             "side": action.upper(),
