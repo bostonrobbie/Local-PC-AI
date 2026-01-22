@@ -54,6 +54,21 @@ def run_qa():
     # 3. Internet
     if not check_internet():
         issues.append("⚠️ No Internet Connection detected.")
+        
+    # 4. Unit Tests Integration
+    print(f"{Fore.CYAN}🧪 Running Test Suite...{Style.RESET_ALL}")
+    import unittest
+    
+    # Capture output to avoid noise, or let it print? Let it print for visibility.
+    loader = unittest.TestLoader()
+    suite = loader.discover('tests')
+    
+    # Create a custom result runner to capture success/fail
+    runner = unittest.TextTestRunner(verbosity=1)
+    result = runner.run(suite)
+    
+    if not result.wasSuccessful():
+        issues.append(f"❌ Unit Tests Failed: {len(result.errors)} errors, {len(result.failures)} failures.")
 
     if not issues:
         print(f"{Fore.GREEN}✅ QA PASSED: System Ready.{Style.RESET_ALL}")

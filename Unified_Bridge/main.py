@@ -5,9 +5,11 @@ import time
 import logging
 import logging
 import socket
+import webbrowser
 from colorama import init, Fore, Style
 from src.manager import ProcessManager
 from src.qa_suite import run_qa
+from src.utils.logger import LogManager
 
 init() # Colorama
 
@@ -30,11 +32,7 @@ if not os.path.exists('logs'):
     os.makedirs('logs')
 
 # Setup Logging
-logging.basicConfig(
-    filename='logs/supervisor.log', 
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s'
-)
+logger = LogManager.get_logger("Supervisor", log_file="logs/supervisor.log")
 
 def load_config():
     with open('config.json', 'r') as f:
@@ -98,9 +96,13 @@ def main():
         mt5_path = config['mt5'].get('path')
         if mt5_path:
             mgr.launch_external_app("MT5", mt5_path)
-            time.sleep(10) # Wait for MT5
+            time.sleep(15) # Wait for MT5 slightly longer
         else:
              print(f"{Fore.RED}MT5 Path not configured!{Style.RESET_ALL}")
+
+    # Open TopStep Dashboard
+    print(f"{Fore.CYAN}🌐 Opening TopStep Dashboard...{Style.RESET_ALL}")
+    webbrowser.open("https://topstepx.com/trade")
     
     # IBKR Bridge
     ib_log = open('logs/ibkr.log', 'a')

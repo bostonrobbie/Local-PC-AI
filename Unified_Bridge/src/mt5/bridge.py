@@ -10,7 +10,6 @@ from flask_cors import CORS
 from flask_cors import CORS
 import requests
 import concurrent.futures
-from logging.handlers import RotatingFileHandler
 from waitress import serve
 
 # Add parent dir to path to find client
@@ -18,21 +17,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from src.topstep.client import TopStepClient
 from src.utils.alerts import AlertManager
 from src.utils.database import DatabaseManager
+from src.utils.logger import LogManager
 
 # Logging
-# Logging
-# Use RotatingFileHandler: Max 5MB, keep 5 backups
-log_handler = RotatingFileHandler('logs/mt5.log', maxBytes=5*1024*1024, backupCount=5)
-log_handler.setFormatter(logging.Formatter('%(asctime)s [MT5] %(message)s'))
-log_handler.setLevel(logging.INFO)
-
-logger = logging.getLogger("MT5_Bridge")
-logger.setLevel(logging.INFO)
-logger.addHandler(log_handler)
-# Also log to console for dev visibility
-console = logging.StreamHandler()
-console.setFormatter(logging.Formatter('%(asctime)s [MT5] %(message)s'))
-logger.addHandler(console)
+logger = LogManager.get_logger("MT5_Bridge", log_file="logs/mt5.log")
 
 def load_config():
     # Load from parent dir
@@ -50,7 +38,7 @@ alerts = AlertManager(CONFIG)
 db = DatabaseManager('trades.db')
 
 # Global Executor for Parallel Tasks
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
 # Non-blocking validation on startup
 try:
@@ -111,6 +99,38 @@ def initialize_mt5():
     except Exception as e:
         logger.error(f"Init Error: {e}")
         return False
+
+def validate_terminal_state():
+    """Checks if MT5 is connected and ready before trading."""
+    if not mt5.terminal_info():
+        logger.warning("MT5 Terminal Info failed. Attempting Reconnect...")
+        return initialize_mt5()
+    return True
+
+def safe_order_send(request, max_retries=3):
+    """Wraps order_send with retry logic for transient errors."""
+    for i in range(max_retries):
+        try:
+            res = mt5.order_send(request)
+            if res is None:
+                logger.error(f"Order Send returned None (Attempt {i+1})")
+                time.sleep(0.5)
+                continue
+                
+            if res.retcode == mt5.TRADE_RETCODE_DONE:
+                return res
+            elif res.retcode in [mt5.TRADE_RETCODE_TIMEOUT, mt5.TRADE_RETCODE_CONNECTION]:
+                logger.warning(f"Transient Error {res.retcode}: {res.comment}. Retrying...")
+                time.sleep(1.0)
+            else:
+                # Fatal error (e.g. Invalid Volume)
+                logger.error(f"Fatal Order Error {res.retcode}: {res.comment}")
+                return res
+        except Exception as e:
+            logger.error(f"Exception during order send: {e}")
+            time.sleep(0.5)
+            
+    return None
 
 def close_positions(symbol, raw_symbol=None):
     """
@@ -252,56 +272,65 @@ def execute_trade(data):
         logger.info("Netting Completed. No remaining volume to open.")
         return {"success": True, "message": "Closed via Netting"}
 
+    # 0. Pre-Trade Validation
+    if not validate_terminal_state():
+        return {"error": "MT5 Terminal Disconnected"}
+
     logger.info(f"Opening New Position: {action} {vol} {symbol}")
     
-    # 5. Order Type & Price Logic -- STRICT LIMIT ORDER UPDATE
-    default_type = MT5_CONF.get('execution', {}).get('default_type', 'MARKET')
-    order_type_str = data.get('type', default_type).upper()
+    # 5. Order Type & Price Logic -- STRICT LIMIT ORDER ENFORCEMENT
+    # We ignore the incoming 'type' unless it's specifically controlling limit behavior.
+    # We ALWAYS send LIMIT orders.
     
     tick = mt5.symbol_info_tick(symbol)
     if not tick: return {"error": f"No Price for {symbol}"}
 
-    action_type = mt5.TRADE_ACTION_DEAL # Default
-    ot = mt5.ORDER_TYPE_BUY if action == 'BUY' else mt5.ORDER_TYPE_SELL
-    ex_price = tick.ask if action == 'BUY' else tick.bid # Default Market Price (Crossing Spread)
+    action_type = mt5.TRADE_ACTION_PENDING
+    ot = mt5.ORDER_TYPE_BUY_LIMIT if action == 'BUY' else mt5.ORDER_TYPE_SELL_LIMIT
     
-    if order_type_str == 'LIMIT':
-        # "Strict Limit" (Marketable):
-        # We want to Fill Immediately, but Cap the Slippage.
-        # Buy Limit @ Current Ask + Offset (Allows filling up to X ticks worse)
-        # Sell Limit @ Current Bid - Offset (Allows filling down to X ticks worse)
-        action_type = mt5.TRADE_ACTION_PENDING
-        ot = mt5.ORDER_TYPE_BUY_LIMIT if action == 'BUY' else mt5.ORDER_TYPE_SELL_LIMIT
-        
-        # Get Slippage Tolerance from Config
-        # Get Slippage Tolerance from Config
-        offset_ticks = MT5_CONF.get('execution', {}).get('slippage_offset_ticks', 5) # Default 5 ticks safety
-        
-        # Optimization: Use Cache
-        info = SYMBOL_CACHE.get(symbol)
-        if not info:
-             # Fallback if not cached
-             info = mt5.symbol_info(symbol)
-             if info: SYMBOL_CACHE[symbol] = info # Cache it now
-        
-        point = info.point if info else 0.0001 # Fallback default
-        offset_val = point * offset_ticks
-
-        signal_price = float(data.get('price', 0.0))
-        if signal_price > 0:
-            # Signal has specific price? We trust it exactly? 
-            # Or do we add slippage to THAT too?
-            # Usually strict limit means "At this price OR BETTER".
-            # Let's use signal price if given.
-            ex_price = signal_price
+    # 6. Price Calculation (Marketable Limit or Specific Price)
+    # Get Configs
+    exec_conf = MT5_CONF.get('execution', {})
+    slippage_ticks = exec_conf.get('slippage_offset_ticks', 2)
+    
+    # Optimization: Use Cache for Point
+    info = SYMBOL_CACHE.get(symbol)
+    if not info:
+         info = mt5.symbol_info(symbol)
+         if info: SYMBOL_CACHE[symbol] = info
+    
+    point = info.point if info else 0.0001
+    offset_val = point * slippage_ticks
+    
+    requested_price = float(data.get('price', 0.0))
+    if requested_price > 0:
+        ex_price = requested_price
+    else:
+        # Marketable Limit: Ask + Offset (Buy), Bid - Offset (Sell)
+        # This ensures we cross the spread to get filled, but caps our bad fill price.
+        if action == 'BUY':
+             ex_price = tick.ask + offset_val
         else:
-            # Marketable Limit Logic
-            if action == 'BUY':
-                # Buy Limit @ Ask + Tolerance
-                ex_price = tick.ask + offset_val
-            else:
-                # Sell Limit @ Bid - Tolerance
-                ex_price = tick.bid - offset_val
+             ex_price = tick.bid - offset_val
+             
+    # 7. TP/SL Calculation
+    # User Request: NO Auto Defaults. Only if given.
+    
+    input_sl = float(data.get('sl', 0))
+    input_tp = float(data.get('tp', 0))
+    
+    sl_price = 0.0
+    tp_price = 0.0
+    
+    # Calculate SL
+    if input_sl > 0:
+        sl_price = input_sl
+            
+    # Calculate TP
+    if input_tp > 0:
+        tp_price = input_tp
+
+    logger.info(f"Order Params: Price={ex_price:.5f}, SL={sl_price:.5f}, TP={tp_price:.5f}")
 
     req = {
         "action": action_type,
@@ -309,24 +338,38 @@ def execute_trade(data):
         "volume": vol,
         "type": ot,
         "price": ex_price,
+        "sl": sl_price,
+        "tp": tp_price,
         "magic": MT5_CONF.get('magic_number', 0),
         "comment": "Unified-Bridge-Limit",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_RETURN, # Return allowed for pending
     }
     
-    # ... (Order Sending)
-    res = mt5.order_send(req)
+    # ... (Order Sending with Retry)
+    try:
+        res = safe_order_send(req)
+    except Exception as e:
+        logger.error(f"MT5 Order Send Exception: {e}")
+        return {"error": f"MT5 Exception: {e}"}
+
+    if res is None:
+        return {"error": "MT5 order_send returned None after retries"}
+        
     if res.retcode != mt5.TRADE_RETCODE_DONE:
         return {"error": f"MT5 Fail: {res.comment} ({res.retcode})"}
         
-    # Calculate Slippage
-    actual_price = res.price
+    # Calculate Slippage (Approximate since it's a Limit Order placed, fill might happen later)
+    # But for Marketable Limit that fills instantly, res.price is the fill price of the DEAL?
+    # No, for Pending Order, res.price is just the order price?
+    # Actually for Marketable Limit that executes immediately, retcode is DONE_PARTIAL or DONE?
+    # We will report the requested price.
+    actual_price = res.price 
+    if actual_price == 0: actual_price = ex_price # Pending order might not have fill price yet
+    
     slippage = 0.0
     if ex_price > 0 and actual_price > 0:
         slippage = abs(actual_price - ex_price)
-        
-    logger.info(f"Trade Executed. Expected: {ex_price}, Actual: {actual_price}, Slippage: {slippage:.2f}")
 
     return {
         "success": True, 
@@ -493,4 +536,4 @@ if __name__ == "__main__":
         
     port = CONFIG['server']['mt5_port']
     logger.info(f"Starting MT5 Bridge on {port} (Waitress Production Server)")
-    serve(app, host="0.0.0.0", port=port, threads=6)
+    serve(app, host="0.0.0.0", port=port, threads=12)

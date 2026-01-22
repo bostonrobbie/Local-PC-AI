@@ -13,30 +13,8 @@ class AlertManager:
         self.webhook_url = self.config.get('discord_webhook', '')
 
     def send_trade_alert(self, trade_data, platform="Unknown", status="Executed"):
-        """Sends a formatted trade alert to Discord."""
-        if not self.enabled or not self.webhook_url:
-            return
-
-        symbol = trade_data.get('symbol')
-        action = trade_data.get('action')
-        volume = trade_data.get('volume')
-        
-        # Color: Green for Success/Buy, Red for Sell? Or Green/Red based on side?
-        # Let's use Green for executed trades generally, or Blue.
-        color = 5763719 # Blue-ish (0x57F287 is green)
-        
-        embed = {
-            "title": f"🚀 Trade Executed ({platform})",
-            "description": f"**{action} {volume} {symbol}**",
-            "color": color,
-            "fields": [
-                {"name": "Status", "value": status, "inline": True},
-                {"name": "Time", "value": datetime.now().strftime("%H:%M:%S"), "inline": True}
-            ],
-            "footer": {"text": "Unified Bridge System"}
-        }
-        
-        self._post_async(embed)
+        """Alerts disabled by user request."""
+        pass
 
     def send_error_alert(self, error_msg, context="System"):
         """Sends a critical error alert."""

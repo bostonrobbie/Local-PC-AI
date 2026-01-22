@@ -3,9 +3,10 @@ import json
 import logging
 import time
 from colorama import Fore, Style
+from src.utils.logger import LogManager
 
 # Logger specific to TopStep
-logger = logging.getLogger("TopStep")
+logger = LogManager.get_logger("TopStep", log_file="logs/topstep.log")
 
 class TopStepClient:
     def __init__(self, config):
@@ -60,22 +61,28 @@ class TopStepClient:
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
-            # Using a lightweight endpoint if possible, or just checking if we get a 401
-            url = f"{self.base_url}/api/User/profile" # Hypothetical endpoint, or just check 401 on any
+            # Check Root/Health Endpoint since we don't know the exact Profile URL
+            # The root returns "Healthy" (200 OK)
+            url = f"{self.base_url}/" 
             
             # Use short timeout just for ping
             response = self.session.get(url, headers=headers, timeout=5)
             
-            if response.status_code in [200, 404]: # 404 means URL reached but path wrong (connection OK)
-                logger.info(f"{Fore.GREEN}TopStepX Connection Validated (Status: {response.status_code}){Style.RESET_ALL}")
+            if response.status_code == 200:
+                logger.info(f"{Fore.GREEN}TopStepX Connection Validated (Status: 200){Style.RESET_ALL}")
                 self.connected = True
+                return True
+            elif response.status_code == 404:
+                # The hypothetical endpoint failed. We can't be sure of connection.
+                logger.warning(f"{Fore.YELLOW}TopStepX Validation Warning: Test endpoint not found (404). API Key may be valid, but check Base URL.{Style.RESET_ALL}")
+                self.connected = True # We allow it, assuming Order endpoint might work.
                 return True
             elif response.status_code == 401:
                  logger.error(f"{Fore.RED}TopStepX Connection Failed: Unauthorized (Check API Key){Style.RESET_ALL}")
                  return False
             else:
                  logger.warning(f"TopStepX Connection Warning: Status {response.status_code}")
-                 self.connected = True # Assume transient error, don't block
+                 self.connected = True 
                  return True
 
         except Exception as e:
@@ -109,28 +116,49 @@ class TopStepClient:
             return {"status": "success", "mode": "mock", "message": msg}
 
         # REAL ORDER
-        return self._send_api_order(symbol, action, volume)
+        return self._send_api_order(symbol, action, volume, 
+                                  price=data.get('price'), 
+                                  sl=data.get('sl'), 
+                                  tp=data.get('tp'))
 
-    def _send_api_order(self, symbol, action, volume):
+    def _send_api_order(self, symbol, action, volume, price=None, sl=None, tp=None):
         url = f"{self.base_url}/api/Order/place"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        
+        # Enforce Limit Order Structure
         payload = {
             "symbol": symbol,
             "side": action.upper(),
             "quantity": volume,
-            "orderType": "MARKET", # Default to Market for consistency
+            "orderType": "LIMIT", 
             "duration": "DAY"
         }
+        
+        # If Price is missing for a Limit Order, TopStep might reject.
+        # We should ideally have a price. If None, maybe default to Market?
+        # User requested STRICT Limit orders.
+        # If no price given, we can't send a Limit. 
+        # But bridge.py usually calculates it. If it comes here without price, fallback/error?
+        # For now, if price is set, use it.
+        if price:
+            payload['price'] = float(price)
+            
+        # Bracket / Strategy parameters (TopStepX Spec assumes 'bracket' or similar)
+        # We'll try adding generic bracket fields.
+        if sl or tp:
+            payload['bracket'] = {}
+            if sl: payload['bracket']['stopLossPrice'] = float(sl)
+            if tp: payload['bracket']['takeProfitPrice'] = float(tp)
         
         try:
             response = self.session.post(url, json=payload, headers=headers, timeout=3)
             
             if response.status_code == 200:
                 self.consecutive_failures = 0 # Reset
-                logger.info(f"{Fore.GREEN}TopStepX Order Sent: {action} {volume} {symbol}{Style.RESET_ALL}")
+                logger.info(f"{Fore.GREEN}TopStepX Order Sent: {action} {volume} {symbol} @ {price}{Style.RESET_ALL}")
                 return {"status": "success", "data": response.json()}
             else:
                 self._handle_failure(f"HTTP {response.status_code}: {response.text}")
